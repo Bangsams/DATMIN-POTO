@@ -355,8 +355,7 @@ with st.sidebar:
     st.markdown("## ⚙️ Mode Foto")
     mode = st.radio(
         "Pilih mode kamera:",
-        # FIX 3: Added new "Photo Booth" mode
-        ["🖼️ Photo Booth (Border Logo)", "🔲 Monokrom / Greyscale", "🌸 Ghibli Style"],
+        ["🔲 Monokrom / Greyscale", "🌸 Ghibli Style"],
         index=0,
     )
     st.markdown("---")
@@ -373,84 +372,149 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-# ── Camera capture ────────────────────────────────────────────────────────────
-st.markdown("<div class='main-card'>", unsafe_allow_html=True)
-st.markdown("### 📸 Ambil Foto")
+# ── Tabs ──────────────────────────────────────────────────────────────────────
+tab_filter, tab_booth = st.tabs(["📸 Mode Filter", "🖼️ Photo Booth"])
 
-is_ghibli    = "Ghibli" in mode
-is_photobooth = "Photo Booth" in mode
-is_mono      = "Monokrom" in mode
+# ════════════════════════════════════════════════════════════════════════════════
+# TAB 1 – Mode Filter (Monokrom & Ghibli) — tidak ada perubahan logika
+# ════════════════════════════════════════════════════════════════════════════════
+with tab_filter:
+    st.markdown("<div class='main-card'>", unsafe_allow_html=True)
+    st.markdown("### 📸 Ambil Foto")
 
-if is_photobooth:
-    mode_label = "Photo Booth"
-    mode_color = "#4BB8D4"
-elif is_ghibli:
-    mode_label = "Ghibli Style"
-    mode_color = "#F5A623"
-else:
-    mode_label = "Monokrom"
-    mode_color = "#1A6FA8"
+    is_ghibli = "Ghibli" in mode
+    is_mono   = "Monokrom" in mode
 
-st.markdown(
-    f"<p>Mode aktif: <span style='color:{mode_color}; font-weight:700;'>{mode_label}</span></p>",
-    unsafe_allow_html=True
-)
+    if is_ghibli:
+        mode_label = "Ghibli Style"
+        mode_color = "#F5A623"
+    else:
+        mode_label = "Monokrom"
+        mode_color = "#1A6FA8"
 
-camera_image = st.camera_input("Klik tombol di bawah untuk mengambil foto")
+    st.markdown(
+        f"<p>Mode aktif: <span style='color:{mode_color}; font-weight:700;'>{mode_label}</span></p>",
+        unsafe_allow_html=True
+    )
 
-if camera_image is not None:
-    raw_img = Image.open(camera_image).convert("RGB")
+    camera_image = st.camera_input("Klik tombol di bawah untuk mengambil foto", key="cam_filter")
 
-    # ── FIX 2: Mirror the captured image (selfie mirror) ──
-    raw_img = mirror_image(raw_img)
+    if camera_image is not None:
+        raw_img = Image.open(camera_image).convert("RGB")
 
-    with st.spinner("⏳ Memproses foto..."):
-        if is_ghibli:
-            processed = apply_ghibli(raw_img)
-        elif is_photobooth:
-            processed = apply_photobooth_border(raw_img)
-        else:
-            processed = apply_monochrome(raw_img)
+        # Mirror the captured image (selfie mirror)
+        raw_img = mirror_image(raw_img)
 
-    col_orig, col_proc = st.columns(2)
-    with col_orig:
-        st.markdown("<p style='text-align:center; color:#F5A623;'>📷 Original</p>", unsafe_allow_html=True)
-        st.image(raw_img, use_container_width=True)
-    with col_proc:
-        st.markdown(f"<p style='text-align:center; color:#F5A623;'>✨ {mode_label}</p>", unsafe_allow_html=True)
-        st.image(processed, use_container_width=True)
+        with st.spinner("⏳ Memproses foto..."):
+            if is_ghibli:
+                processed = apply_ghibli(raw_img)
+            else:
+                processed = apply_monochrome(raw_img)
 
-    proc_bytes = pil_to_bytes(processed)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"photo_{mode_label.replace(' ', '_')}_{ts}.png"
+        col_orig, col_proc = st.columns(2)
+        with col_orig:
+            st.markdown("<p style='text-align:center; color:#F5A623;'>📷 Original</p>", unsafe_allow_html=True)
+            st.image(raw_img, use_container_width=True)
+        with col_proc:
+            st.markdown(f"<p style='text-align:center; color:#F5A623;'>✨ {mode_label}</p>", unsafe_allow_html=True)
+            st.image(processed, use_container_width=True)
 
-    st.markdown("#### Simpan Foto")
-    col_dl, col_save = st.columns(2)
+        proc_bytes = pil_to_bytes(processed)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"photo_{mode_label.replace(' ', '_')}_{ts}.png"
 
-    with col_dl:
-        st.download_button(
-            label="⬇️ Download Langsung",
-            data=proc_bytes,
-            file_name=filename,
-            mime="image/png",
-        )
+        st.markdown("#### Simpan Foto")
+        col_dl, col_save = st.columns(2)
 
-    with col_save:
-        MAX_PHOTOS = 3
-        jumlah = len(st.session_state.saved_photos)
-        if jumlah >= MAX_PHOTOS:
-            st.warning(f"🚫 Galeri sudah penuh ({MAX_PHOTOS} foto). Kirim dulu ke email, lalu hapus.")
-        else:
-            if st.button(f"💾 Simpan ke Galeri ({jumlah}/{MAX_PHOTOS})"):
-                st.session_state.saved_photos.append({
-                    "name":  filename,
-                    "bytes": proc_bytes,
-                    "mode":  mode_label,
-                })
-                st.success(f"✅ Foto disimpan ke galeri! ({jumlah + 1}/{MAX_PHOTOS})")
-                st.rerun()
+        with col_dl:
+            st.download_button(
+                label="⬇️ Download Langsung",
+                data=proc_bytes,
+                file_name=filename,
+                mime="image/png",
+                key="dl_filter_direct",
+            )
 
-st.markdown("</div>", unsafe_allow_html=True)
+        with col_save:
+            MAX_PHOTOS = 3
+            jumlah = len(st.session_state.saved_photos)
+            if jumlah >= MAX_PHOTOS:
+                st.warning(f"🚫 Galeri sudah penuh ({MAX_PHOTOS} foto). Kirim dulu ke email, lalu hapus.")
+            else:
+                if st.button(f"💾 Simpan ke Galeri ({jumlah}/{MAX_PHOTOS})", key="save_filter"):
+                    st.session_state.saved_photos.append({
+                        "name":  filename,
+                        "bytes": proc_bytes,
+                        "mode":  mode_label,
+                    })
+                    st.success(f"✅ Foto disimpan ke galeri! ({jumlah + 1}/{MAX_PHOTOS})")
+                    st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ════════════════════════════════════════════════════════════════════════════════
+# TAB 2 – Photo Booth (border logo Data Mining)
+# ════════════════════════════════════════════════════════════════════════════════
+with tab_booth:
+    st.markdown("<div class='main-card'>", unsafe_allow_html=True)
+    st.markdown("### 🖼️ Photo Booth – Border Logo Data Mining")
+    st.markdown(
+        "<p style='color:#4BB8D4;'>Foto biasa dengan border berlapis warna logo "
+        "Laboratorium Data Mining + overlay logo di pojok kanan bawah.</p>",
+        unsafe_allow_html=True
+    )
+
+    camera_booth = st.camera_input("Klik tombol di bawah untuk mengambil foto", key="cam_booth")
+
+    if camera_booth is not None:
+        raw_booth = Image.open(camera_booth).convert("RGB")
+
+        # Mirror the captured image (selfie mirror)
+        raw_booth = mirror_image(raw_booth)
+
+        with st.spinner("⏳ Menambahkan border..."):
+            processed_booth = apply_photobooth_border(raw_booth)
+
+        col_orig_b, col_proc_b = st.columns(2)
+        with col_orig_b:
+            st.markdown("<p style='text-align:center; color:#F5A623;'>📷 Original</p>", unsafe_allow_html=True)
+            st.image(raw_booth, use_container_width=True)
+        with col_proc_b:
+            st.markdown("<p style='text-align:center; color:#4BB8D4;'>✨ Photo Booth</p>", unsafe_allow_html=True)
+            st.image(processed_booth, use_container_width=True)
+
+        proc_bytes_b = pil_to_bytes(processed_booth)
+        ts_b = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename_b = f"photo_PhotoBooth_{ts_b}.png"
+
+        st.markdown("#### Simpan Foto")
+        col_dl_b, col_save_b = st.columns(2)
+
+        with col_dl_b:
+            st.download_button(
+                label="⬇️ Download Langsung",
+                data=proc_bytes_b,
+                file_name=filename_b,
+                mime="image/png",
+                key="dl_booth_direct",
+            )
+
+        with col_save_b:
+            MAX_PHOTOS = 3
+            jumlah_b = len(st.session_state.saved_photos)
+            if jumlah_b >= MAX_PHOTOS:
+                st.warning(f"🚫 Galeri sudah penuh ({MAX_PHOTOS} foto). Kirim dulu ke email, lalu hapus.")
+            else:
+                if st.button(f"💾 Simpan ke Galeri ({jumlah_b}/{MAX_PHOTOS})", key="save_booth"):
+                    st.session_state.saved_photos.append({
+                        "name":  filename_b,
+                        "bytes": proc_bytes_b,
+                        "mode":  "Photo Booth",
+                    })
+                    st.success(f"✅ Foto disimpan ke galeri! ({jumlah_b + 1}/{MAX_PHOTOS})")
+                    st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ── Saved gallery ─────────────────────────────────────────────────────────────
 if st.session_state.saved_photos:
