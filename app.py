@@ -234,46 +234,54 @@ def apply_photobooth_border(img: Image.Image) -> Image.Image:
     return canvas
 
 
-# ── FIX 1: Ghibli with token budget ──────────────────────────────────────────
-# gpt-image-1 output pricing ≈ $0.040 per image at 1024×1024 "standard" quality
-# To stay safely under $0.05, we use size="1024x1024" and quality="standard" (default).
-# We also resize the INPUT to 512×512 max to reduce input token costs.
+# ── Ghibli with strict token budget (max $0.05, target ~$0.01–$0.02) ──────────
+#
+# Breakdown biaya per panggilan API:
+#   Model  : gpt-image-1-mini   → output token $8/1M  (vs gpt-image-1 $40/1M)
+#   Size   : 512x512            → ~272 output token   ≈ $0.002 output
+#   Quality: low                → token paling sedikit
+#   Input  : di-resize ke 256px → input image token ~$2.50/1M ≈ $0.001
+#   Prompt : singkat ~30 token  → text token $2/1M    ≈ $0.0001
+#   ─────────────────────────────────────────────────────────────────
+#   TOTAL estimasi              ≈ $0.003–$0.015  (jauh di bawah $0.05)
+#
 def apply_ghibli(img: Image.Image) -> Image.Image:
     """
-    Send the captured image to OpenAI Images Edit endpoint and return
-    the Ghibli-style result.
+    Kirim foto ke OpenAI Images Edit dan kembalikan hasil Ghibli-style.
 
-    Token / cost control (FIX 1):
-      - Input resized to max 512×512 before upload  → reduces input token usage
-      - size="1024x1024", quality="standard"        → ~$0.04 output cost
-      - Total stays well under the $0.05 budget
+    Kontrol biaya:
+      - Model  : gpt-image-1-mini  → 5× lebih murah dari gpt-image-1
+      - Input  : di-resize ke max 256×256 sebelum upload
+      - Output : size=512x512, quality=low
+      - Estimasi total biaya ≈ $0.003–$0.015 per panggilan
     """
     try:
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-        # ── Resize input to max 512px to cut input tokens ──
+        # ── Resize input ke max 256px → potong input token secara drastis ──
         input_img = img.copy()
-        input_img.thumbnail((512, 512), Image.LANCZOS)
+        input_img.thumbnail((256, 256), Image.LANCZOS)
 
         buf = io.BytesIO()
         input_img.save(buf, format="PNG")
         buf.seek(0)
 
         response = client.images.edit(
-            model="gpt-image-1",
+            model="gpt-image-1-mini",   # 5× lebih murah dari gpt-image-1
             image=("photo.png", buf, "image/png"),
             prompt=(
-                "Transform this portrait photo into a Studio Ghibli anime style illustration. "
-                "Keep the person's facial features recognisable. Use soft watercolour-like "
-                "colours, gentle shading, and the characteristic warm Ghibli palette."
+                "Ghibli anime style. Soft watercolour, warm palette, "
+                "keep face recognisable."
             ),
             n=1,
-            size="1024x1024",       # standard output size → ~$0.04
+            size="512x512",             # resolusi kecil → output token minimal
+            quality="low",              # tier paling hemat
         )
 
         import base64 as _b64
         img_data = _b64.b64decode(response.data[0].b64_json)
         result_img = Image.open(io.BytesIO(img_data)).convert("RGB")
+        # Upscale kembali ke ukuran asli agar tampil proporsional
         result_img = result_img.resize(img.size, Image.LANCZOS)
         return result_img
 
