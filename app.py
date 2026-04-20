@@ -234,55 +234,64 @@ def apply_photobooth_border(img: Image.Image) -> Image.Image:
     return canvas
 
 
-# ── Ghibli with strict token budget (max $0.05, target ~$0.01–$0.02) ──────────
+# ── PERBAIKAN: apply_ghibli dengan size & model yang valid ───────────────────
 #
-# Breakdown biaya per panggilan API:
-#   Model  : gpt-image-1-mini   → output token $8/1M  (vs gpt-image-1 $40/1M)
-#   Size   : 512x512            → ~272 output token   ≈ $0.002 output
-#   Quality: low                → token paling sedikit
-#   Input  : di-resize ke 256px → input image token ~$2.50/1M ≈ $0.001
-#   Prompt : singkat ~30 token  → text token $2/1M    ≈ $0.0001
-#   ─────────────────────────────────────────────────────────────────
-#   TOTAL estimasi              ≈ $0.003–$0.015  (jauh di bawah $0.05)
+# Perubahan dari versi sebelumnya:
+#   1. model  : "gpt-image-1-mini" → "gpt-image-1"
+#      (gpt-image-1-mini tidak valid untuk images.edit)
+#   2. size   : "512x512" (ERROR) → "1024x1024"
+#      (ukuran valid: 1024x1024 | 1024x1536 | 1536x1024 | auto)
+#   3. input  : di-resize ke 128×128 (lebih kecil dari 256 sebelumnya)
+#      → potong input token lebih drastis untuk hemat biaya
+#
+# Estimasi biaya per panggilan:
+#   Input  128×128 PNG           ≈ $0.001
+#   Output 1024×1024 quality=low ≈ $0.011
+#   ─────────────────────────────────────
+#   TOTAL                        ≈ $0.012–$0.015  (jauh di bawah $0.05)
 #
 def apply_ghibli(img: Image.Image) -> Image.Image:
     """
     Kirim foto ke OpenAI Images Edit dan kembalikan hasil Ghibli-style.
 
     Kontrol biaya:
-      - Model  : gpt-image-1-mini  → 5× lebih murah dari gpt-image-1
-      - Input  : di-resize ke max 256×256 sebelum upload
-      - Output : size=512x512, quality=low
-      - Estimasi total biaya ≈ $0.003–$0.015 per panggilan
+      - Model  : gpt-image-1          → satu-satunya yang support images.edit
+      - Input  : di-resize ke 128×128 → potong input token secara drastis
+      - Output : size=1024x1024, quality=low → tier paling hemat yang valid
+      - Estimasi total biaya ≈ $0.012–$0.015 per panggilan
     """
     try:
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-        # ── Resize input ke max 256px → potong input token secara drastis ──
+        # ── Simpan ukuran asli untuk upscale di akhir ──
+        original_size = img.size
+
+        # ── Resize input ke max 128×128 → potong input token secara ekstrem ──
         input_img = img.copy()
-        input_img.thumbnail((256, 256), Image.LANCZOS)
+        input_img.thumbnail((128, 128), Image.LANCZOS)
 
         buf = io.BytesIO()
         input_img.save(buf, format="PNG")
         buf.seek(0)
 
         response = client.images.edit(
-            model="gpt-image-1-mini",   # 5× lebih murah dari gpt-image-1
+            model="gpt-image-1",        # satu-satunya model yg support images.edit
             image=("photo.png", buf, "image/png"),
             prompt=(
-                "Ghibli anime style. Soft watercolour, warm palette, "
-                "keep face recognisable."
+                "Studio Ghibli anime style illustration. "
+                "Soft watercolour brushstrokes, warm and muted palette, "
+                "gentle cel shading, keep the person's face recognisable."
             ),
             n=1,
-            size="512x512",             # resolusi kecil → output token minimal
-            quality="low",              # tier paling hemat
+            size="1024x1024",           # ukuran terkecil yang valid
+            quality="low",              # tier paling hemat → ~$0.011 output
         )
 
-        import base64 as _b64
-        img_data = _b64.b64decode(response.data[0].b64_json)
+        img_data = base64.b64decode(response.data[0].b64_json)
         result_img = Image.open(io.BytesIO(img_data)).convert("RGB")
+
         # Upscale kembali ke ukuran asli agar tampil proporsional
-        result_img = result_img.resize(img.size, Image.LANCZOS)
+        result_img = result_img.resize(original_size, Image.LANCZOS)
         return result_img
 
     except Exception as e:
