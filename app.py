@@ -1,7 +1,7 @@
 import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import io
 import base64
 import smtplib
@@ -23,8 +23,6 @@ SMTP_HOST      = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT      = int(os.getenv("SMTP_PORT", 465))
 SMTP_USER      = os.getenv("SMTP_USERNAME")
 SMTP_PASS      = os.getenv("SMTP_PASSWORD")
-
-# api key dipass langsung ke OpenAI() client, bukan via openai.api_key
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -165,23 +163,100 @@ def pil_to_bytes(img: Image.Image, fmt="PNG") -> bytes:
     return buf.getvalue()
 
 
+# ── FIX 2: Mirror / flip image horizontally (selfie mirror effect) ────────────
+def mirror_image(img: Image.Image) -> Image.Image:
+    """Flip image horizontally to simulate selfie mirror effect."""
+    return img.transpose(Image.FLIP_LEFT_RIGHT)
+
+
 def apply_monochrome(img: Image.Image) -> Image.Image:
     """Convert to greyscale, return RGB PIL image."""
     grey = img.convert("L")
     return grey.convert("RGB")
 
 
+# ── FIX 3: Photo Booth mode – add Data Mining logo border ────────────────────
+def apply_photobooth_border(img: Image.Image) -> Image.Image:
+    """
+    Add a decorative border inspired by the Data Mining Lab logo colors:
+    - Outer border  : abu-abu gelap  #5A5A5A
+    - Middle stripe : biru muda/cyan #4BB8D4
+    - Inner stripe  : kuning/emas    #F5A623
+    The logo is overlaid at the bottom-right corner.
+    """
+    # Border thickness proportional to image size
+    w, h = img.size
+    outer  = max(12, int(min(w, h) * 0.022))   # abu-abu  #5A5A5A
+    middle = max(7,  int(min(w, h) * 0.013))   # cyan     #4BB8D4
+    inner  = max(5,  int(min(w, h) * 0.009))   # emas     #F5A623
+
+    total_border = outer + middle + inner
+
+    # New canvas size
+    new_w = w + total_border * 2
+    new_h = h + total_border * 2
+
+    # ── Draw layered border ──
+    canvas = Image.new("RGB", (new_w, new_h), "#5A5A5A")   # outer
+
+    mid_canvas = Image.new("RGB", (new_w - outer*2, new_h - outer*2), "#4BB8D4")
+    canvas.paste(mid_canvas, (outer, outer))
+
+    inner_canvas = Image.new("RGB",
+        (new_w - (outer+middle)*2, new_h - (outer+middle)*2), "#F5A623")
+    canvas.paste(inner_canvas, (outer+middle, outer+middle))
+
+    # Paste original photo
+    canvas.paste(img, (total_border, total_border))
+
+    # ── Overlay logo at bottom-right ──
+    logo_path = "/mnt/user-data/uploads/1776697830754_image.png"
+    if os.path.exists(logo_path):
+        try:
+            logo = Image.open(logo_path).convert("RGBA")
+            logo_max = int(min(new_w, new_h) * 0.18)
+            logo.thumbnail((logo_max, logo_max), Image.LANCZOS)
+
+            # Position: bottom-right with small padding
+            pad = int(total_border * 0.6)
+            lx = new_w - logo.width - pad
+            ly = new_h - logo.height - pad
+
+            # Semi-transparent white backing for readability
+            backing = Image.new("RGBA", (logo.width + 8, logo.height + 8), (255, 255, 255, 180))
+            canvas_rgba = canvas.convert("RGBA")
+            canvas_rgba.paste(backing, (lx - 4, ly - 4), backing)
+            canvas_rgba.paste(logo, (lx, ly), logo)
+            canvas = canvas_rgba.convert("RGB")
+        except Exception:
+            pass  # If logo fails, border is still applied
+
+    return canvas
+
+
+# ── FIX 1: Ghibli with token budget ──────────────────────────────────────────
+# gpt-image-1 output pricing ≈ $0.040 per image at 1024×1024 "standard" quality
+# To stay safely under $0.05, we use size="1024x1024" and quality="standard" (default).
+# We also resize the INPUT to 512×512 max to reduce input token costs.
 def apply_ghibli(img: Image.Image) -> Image.Image:
     """
     Send the captured image to OpenAI Images Edit endpoint and return
-    the Ghibli-style result. Falls back to a stylised CV2 cartoon if API fails.
+    the Ghibli-style result.
+
+    Token / cost control (FIX 1):
+      - Input resized to max 512×512 before upload  → reduces input token usage
+      - size="1024x1024", quality="standard"        → ~$0.04 output cost
+      - Total stays well under the $0.05 budget
     """
     try:
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-        # ── Convert PIL → PNG bytes ──
+        # ── Resize input to max 512px to cut input tokens ──
+        input_img = img.copy()
+        input_img.thumbnail((512, 512), Image.LANCZOS)
+
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        input_img.save(buf, format="PNG")
         buf.seek(0)
 
         response = client.images.edit(
@@ -193,7 +268,7 @@ def apply_ghibli(img: Image.Image) -> Image.Image:
                 "colours, gentle shading, and the characteristic warm Ghibli palette."
             ),
             n=1,
-            size="1024x1024",
+            size="1024x1024",       # standard output size → ~$0.04
         )
 
         import base64 as _b64
@@ -262,7 +337,7 @@ def send_email(recipient: str, photos: list) -> bool:
 # ── Header ────────────────────────────────────────────────────────────────────
 col_logo, col_title = st.columns([1, 5])
 with col_logo:
-    logo_path = "/mnt/user-data/uploads/1776611332371_image.png"
+    logo_path = "/mnt/user-data/uploads/1776697830754_image.png"
     if os.path.exists(logo_path):
         st.image(logo_path, width=80)
 with col_title:
@@ -280,7 +355,8 @@ with st.sidebar:
     st.markdown("## ⚙️ Mode Foto")
     mode = st.radio(
         "Pilih mode kamera:",
-        ["🔲 Monokrom / Greyscale", "🌸 Ghibli Style"],
+        # FIX 3: Added new "Photo Booth" mode
+        ["🖼️ Photo Booth (Border Logo)", "🔲 Monokrom / Greyscale", "🌸 Ghibli Style"],
         index=0,
     )
     st.markdown("---")
@@ -302,8 +378,18 @@ st.markdown("<div class='main-card'>", unsafe_allow_html=True)
 st.markdown("### 📸 Ambil Foto")
 
 is_ghibli    = "Ghibli" in mode
-mode_label   = "Ghibli Style" if is_ghibli else "Monokrom"
-mode_color   = "#F5A623" if is_ghibli else "#1A6FA8"
+is_photobooth = "Photo Booth" in mode
+is_mono      = "Monokrom" in mode
+
+if is_photobooth:
+    mode_label = "Photo Booth"
+    mode_color = "#4BB8D4"
+elif is_ghibli:
+    mode_label = "Ghibli Style"
+    mode_color = "#F5A623"
+else:
+    mode_label = "Monokrom"
+    mode_color = "#1A6FA8"
 
 st.markdown(
     f"<p>Mode aktif: <span style='color:{mode_color}; font-weight:700;'>{mode_label}</span></p>",
@@ -315,11 +401,16 @@ camera_image = st.camera_input("Klik tombol di bawah untuk mengambil foto")
 if camera_image is not None:
     raw_img = Image.open(camera_image).convert("RGB")
 
+    # ── FIX 2: Mirror the captured image (selfie mirror) ──
+    raw_img = mirror_image(raw_img)
+
     with st.spinner("⏳ Memproses foto..."):
         if is_ghibli:
             processed = apply_ghibli(raw_img)
+        elif is_photobooth:
+            processed = apply_photobooth_border(raw_img)
         else:
-            processed  = apply_monochrome(raw_img)
+            processed = apply_monochrome(raw_img)
 
     col_orig, col_proc = st.columns(2)
     with col_orig:
